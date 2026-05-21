@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sky Fish — Monitoramento da Qualidade da Água</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      background: linear-gradient(160deg, #005B96 0%, #003d66 55%, #001f33 100%);
+      font-family: 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #fff;
+      overflow-x: hidden;
+    }
+
+    /* ── Bolhas decorativas ── */
+    .bubble {
+      position: fixed;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.07);
+      pointer-events: none;
+      animation: float linear infinite;
+    }
+    .bubble:nth-child(1){ width:340px;height:340px;top:-120px;right:-100px;animation-duration:9s; }
+    .bubble:nth-child(2){ width:220px;height:220px;bottom:80px;left:-70px;animation-duration:11s;animation-delay:-4s; }
+    .bubble:nth-child(3){ width:160px;height:160px;top:45%;right:4%;animation-duration:7s;animation-delay:-6s;opacity:.5; }
+    .bubble:nth-child(4){ width:80px;height:80px;top:20%;left:8%;animation-duration:13s;animation-delay:-2s;opacity:.3; }
+
+    @keyframes float {
+      0%,100%{ transform:translateY(0); }
+      50%     { transform:translateY(-22px); }
+    }
+
+    /* ── Loading ── */
+    #loading {
+      position: fixed; inset: 0; z-index: 200;
+      background: linear-gradient(160deg, #005B96 0%, #003d66 55%, #001f33 100%);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px;
+      transition: opacity .6s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #loading .logo { height: 52px; width: auto; }
+    .spinner {
+      width: 44px; height: 44px;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: #00FFB3;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-txt { color: rgba(255,255,255,0.55); font-size: .88rem; letter-spacing: .3px; }
+
+    /* ── Layout ── */
+    .container { max-width: 1120px; margin: 0 auto; padding: 36px 20px 64px; }
+
+    /* ── Header ── */
+    header {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 10px; margin-bottom: 48px; text-align: center;
+    }
+    header .logo { height: 54px; width: auto; filter: drop-shadow(0 4px 14px rgba(0,0,0,.35)); }
+    .page-title { font-size: 1.05rem; font-weight: 400; color: rgba(255,255,255,.65); letter-spacing: .4px; }
+    .station-label {
+      font-size: .75rem; color: rgba(255,255,255,.35);
+      text-transform: uppercase; letter-spacing: 1.4px;
+    }
+    .badge-calibracao {
+      margin-top: 6px;
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(255,190,50,.12); border: 1px solid rgba(255,190,50,.3);
+      color: #ffd060; font-size: .73rem; letter-spacing: .4px;
+      padding: 5px 14px; border-radius: 20px;
+    }
+
+    /* ── Cards ── */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 18px; margin-bottom: 24px;
+    }
+    .card {
+      position: relative; overflow: hidden;
+      background: rgba(255,255,255,.07);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 22px; padding: 28px 24px 24px;
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      transition: transform .2s, box-shadow .2s;
+    }
+    .card:hover { transform: translateY(-3px); box-shadow: 0 16px 40px rgba(0,0,0,.25); }
+
+    .card::before {
+      content: ''; position: absolute;
+      top: 0; left: 0; right: 0; height: 3px;
+      border-radius: 22px 22px 0 0;
+    }
+    .card.od   ::before { background: linear-gradient(90deg,#00FFB3,#00c896); }
+    .card.sat  ::before { background: linear-gradient(90deg,#00CFFF,#0099cc); }
+    .card.ph   ::before { background: linear-gradient(90deg,#A8FF78,#5ecc3a); }
+    .card.temp ::before { background: linear-gradient(90deg,#FF6B35,#e84a10); }
+
+    .card-icon { width: 36px; height: 36px; margin-bottom: 14px; opacity: .85; }
+
+    .card-label {
+      font-size: .72rem; font-weight: 600;
+      letter-spacing: 1.3px; text-transform: uppercase;
+      color: rgba(255,255,255,.5); margin-bottom: 8px;
+    }
+    .card-value { font-size: 2.9rem; font-weight: 700; line-height: 1; margin-bottom: 4px; transition: color .3s; }
+    .card.od   .card-value { color: #00FFB3; }
+    .card.sat  .card-value { color: #00CFFF; }
+    .card.ph   .card-value { color: #A8FF78; }
+    .card.temp .card-value { color: #FF6B35; }
+    .card-unit { font-size: .85rem; color: rgba(255,255,255,.38); }
+
+    .card-status {
+      position: absolute; top: 16px; right: 16px;
+      font-size: .58rem; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+      padding: 3px 8px; border-radius: 6px;
+    }
+    .card-status.ok       { background: rgba(0,255,179,.15); color:#7affd1; }
+    .card-status.alert    { background: rgba(255,190,50,.18); color:#ffd060; }
+    .card-status.critical { background: rgba(255,80,80,.20);  color:#ff8080; }
+
+    /* ── Período ── */
+    .period-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px; flex-wrap: wrap; gap: 10px;
+    }
+    .period-label {
+      font-size: .72rem; font-weight: 600; letter-spacing: 1.2px;
+      text-transform: uppercase; color: rgba(255,255,255,.4);
+    }
+    .time-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+    .time-btn {
+      font-size: .72rem; padding: 4px 14px; border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.2); background: transparent;
+      color: rgba(255,255,255,.5); cursor: pointer; transition: all .2s;
+    }
+    .time-btn.active, .time-btn:hover {
+      background: rgba(255,255,255,.12); color: #fff;
+      border-color: rgba(255,255,255,.4);
+    }
+
+    /* ── Charts grid ── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+      gap: 18px; margin-bottom: 28px;
+    }
+    .chart-card {
+      background: rgba(255,255,255,.07);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 22px; padding: 24px;
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    }
+    .chart-title {
+      font-size: .72rem; font-weight: 700;
+      letter-spacing: 1.2px; text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+    .chart-wrap { position: relative; height: 200px; }
+
+    @media(max-width:520px) {
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── Alertas ── */
+    .alerts-card {
+      background: rgba(255,255,255,.07);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 22px; padding: 24px;
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      margin-bottom: 28px;
+    }
+    .alerts-header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .alerts-title-wrap { display: flex; align-items: center; gap: 10px; }
+    .alerts-title {
+      font-size: .72rem; font-weight: 700;
+      letter-spacing: 1.2px; text-transform: uppercase;
+      color: #ffd060;
+    }
+    .alerts-bell {
+      width: 16px; height: 16px;
+      stroke: #ffd060; fill: none; stroke-width: 1.8;
+      stroke-linecap: round; stroke-linejoin: round;
+    }
+    .alerts-count {
+      font-size: .68rem; color: rgba(255,255,255,.5);
+      padding: 3px 10px; border-radius: 10px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.1);
+    }
+    .alerts-list {
+      max-height: 320px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 8px;
+      padding-right: 4px;
+    }
+    .alerts-list::-webkit-scrollbar { width: 6px; }
+    .alerts-list::-webkit-scrollbar-track { background: transparent; }
+    .alerts-list::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,.15); border-radius: 3px;
+    }
+    .alert-empty {
+      text-align: center; padding: 32px 16px;
+      color: rgba(255,255,255,.35); font-size: .82rem;
+    }
+    .alert-empty svg {
+      width: 36px; height: 36px; margin-bottom: 10px; opacity: .4;
+      stroke: #00FFB3; fill: none; stroke-width: 1.5;
+    }
+    .alert-item {
+      display: grid;
+      grid-template-columns: 110px 90px 1fr;
+      gap: 12px; align-items: center;
+      padding: 10px 14px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.08);
+      border-left-width: 3px;
+      border-radius: 10px;
+      font-size: .8rem;
+    }
+    .alert-item.sev-alert    { border-left-color: #ffd060; }
+    .alert-item.sev-critical { border-left-color: #ff6060; }
+    .alert-item.sev-ok       { border-left-color: #00FFB3; }
+    .alert-time {
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      font-size: .72rem; color: rgba(255,255,255,.55);
+    }
+    .alert-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: .62rem; font-weight: 700; letter-spacing: .6px;
+      padding: 3px 9px; border-radius: 6px;
+      justify-self: start; text-transform: uppercase;
+    }
+    .alert-badge.alert    { background: rgba(255,190,50,.18); color:#ffd060; }
+    .alert-badge.critical { background: rgba(255,80,80,.20);  color:#ff8080; }
+    .alert-badge.ok       { background: rgba(0,255,179,.15);  color:#7affd1; }
+    .alert-msg { color: rgba(255,255,255,.8); line-height: 1.4; }
+    .alert-metric-name { font-weight: 600; color: #fff; }
+    .alert-value { font-family: 'SF Mono', Menlo, Consolas, monospace; color: rgba(255,255,255,.65); }
+
+    @media(max-width:600px) {
+      .alert-item { grid-template-columns: 1fr; gap: 4px; padding: 12px; }
+      .alert-time { font-size: .68rem; }
+    }
+
+    /* ── Status ── */
+    .status-bar {
+      display: flex; align-items: center; justify-content: center;
+      gap: 24px; flex-wrap: wrap;
+    }
+    .status-item { display: flex; align-items: center; gap: 7px; font-size: .78rem; color: rgba(255,255,255,.42); }
+    .dot-live {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #00FFB3; box-shadow: 0 0 8px #00FFB3;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    @media(max-width:540px) {
+      .cards-grid { grid-template-columns: 1fr 1fr; }
+      .card-value  { font-size: 2.1rem; }
+      .chart-wrap  { height: 200px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Bolhas -->
+<div class="bubble"></div>
+<div class="bubble"></div>
+<div class="bubble"></div>
+<div class="bubble"></div>
+
+<!-- Loading -->
+<div id="loading">
+  <img class="logo" src="logo-mark.svg" alt="Sky Fish" />
+  <div class="spinner"></div>
+  <span class="loading-txt">Conectando ao sensor...</span>
+</div>
+
+<!-- ──────────── PÁGINA ──────────── -->
+<div class="container">
+
+  <header>
+    <img class="logo" src="logo-mark.svg" alt="Sky Fish" />
+
+    <p class="page-title">Monitoramento da Qualidade da Água</p>
+    <p class="station-label">Estação de Monitoramento</p>
+    <div class="badge-calibracao">&#9888; Dados em fase de calibração</div>
+  </header>
+
+  <!-- Métricas -->
+  <div class="cards-grid">
+
+    <div class="card od">
+      <span class="card-status ok" id="status-od_concentracao">—</span>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="#00FFB3" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2C6 9 4 13 4 16a8 8 0 0 0 16 0c0-3-2-7-8-14z"/>
+      </svg>
+      <div class="card-label">OD Concentração</div>
+      <div class="card-value" id="val-od_concentracao">--</div>
+      <div class="card-unit">mg/L</div>
+    </div>
+
+    <div class="card sat">
+      <span class="card-status ok" id="status-od_saturacao">—</span>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="#00CFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M8 12a4 4 0 0 1 8 0"/>
+        <circle cx="12" cy="12" r="1" fill="#00CFFF"/>
+      </svg>
+      <div class="card-label">OD Saturação</div>
+      <div class="card-value" id="val-od_saturacao">--</div>
+      <div class="card-unit">%</div>
+    </div>
+
+    <div class="card ph">
+      <span class="card-status ok" id="status-ph">—</span>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="#A8FF78" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0 0h18"/>
+      </svg>
+      <div class="card-label">pH</div>
+      <div class="card-value" id="val-ph">--</div>
+      <div class="card-unit">pH</div>
+    </div>
+
+    <div class="card temp">
+      <span class="card-status ok" id="status-od_temp">—</span>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="#FF6B35" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
+      </svg>
+      <div class="card-label">Temperatura</div>
+      <div class="card-value" id="val-od_temp">--</div>
+      <div class="card-unit">°C</div>
+    </div>
+
+  </div>
+
+  <!-- Controle de período -->
+  <div class="period-bar">
+    <span class="period-label">Período do histórico</span>
+    <div class="time-buttons">
+      <button class="time-btn" data-h="1">1h</button>
+      <button class="time-btn" data-h="3">3h</button>
+      <button class="time-btn" data-h="12">12h</button>
+      <button class="time-btn active" data-h="24">24h</button>
+      <button class="time-btn" data-h="48">2d</button>
+      <button class="time-btn" data-h="72">3d</button>
+      <button class="time-btn" data-h="168">7d</button>
+    </div>
+  </div>
+
+  <!-- Gráficos -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-title" style="color:#00FFB3">OD Concentração <span style="opacity:.5;font-weight:400">mg/L</span></div>
+      <div class="chart-wrap"><canvas id="chart-od_concentracao"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title" style="color:#00CFFF">OD Saturação <span style="opacity:.5;font-weight:400">%</span></div>
+      <div class="chart-wrap"><canvas id="chart-od_saturacao"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title" style="color:#A8FF78">pH <span style="opacity:.5;font-weight:400">pH</span></div>
+      <div class="chart-wrap"><canvas id="chart-ph"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title" style="color:#FF6B35">Temperatura <span style="opacity:.5;font-weight:400">°C</span></div>
+      <div class="chart-wrap"><canvas id="chart-od_temp"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Notificações de Alerta -->
+  <div class="alerts-card">
+    <div class="alerts-header">
+      <div class="alerts-title-wrap">
+        <svg class="alerts-bell" viewBox="0 0 24 24">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        <span class="alerts-title">Notificações de Alerta</span>
+      </div>
+      <span class="alerts-count" id="alerts-count">0 eventos</span>
+    </div>
+    <div class="alerts-list" id="alerts-list">
+      <div class="alert-empty">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <div>Todos os parâmetros dentro da faixa ideal</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="dot-live"></div>
+      <span>Ao vivo</span>
+    </div>
+    <div class="status-item">
+      Atualizado às <strong id="last-update" style="color:rgba(255,255,255,.65);margin-left:4px">--</strong>
+    </div>
+    <div class="status-item">
+      <span style="color:#00FFB3;font-weight:600">ao vivo</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+//  PARÂMETROS DE TELEMETRIA
+//  Faixas conforme literatura aquícola (Boyd 1998,
+//  Pillay & Kutty 2005, CONAMA 357/2005)
+// ═══════════════════════════════════════════════════
+
+const METRICS = [
+  {
+    key: 'od_concentracao', label: 'OD Concentração', unit: 'mg/L', dec: 2,
+    color: '#00FFB3',
+    ideal: [5, 12], critLow: 3, critHigh: 15,
+    diurnal: { mean: 7.8, amp: 1.9, peakHour: 15 },
+  },
+  {
+    key: 'od_saturacao', label: 'OD Saturação', unit: '%', dec: 3,
+    color: '#00CFFF',
+    ideal: [0.60, 1.10], critLow: 0.40, critHigh: 1.20,
+    diurnal: { mean: 0.88, amp: 0.18, peakHour: 15 },
+  },
+  {
+    key: 'ph', label: 'pH', unit: '', dec: 2,
+    color: '#A8FF78',
+    ideal: [6.5, 9.0], critLow: 5.0, critHigh: 10.0,
+    diurnal: { mean: 7.6, amp: 0.55, peakHour: 15 },
+  },
+  {
+    key: 'od_temp', label: 'Temperatura', unit: '°C', dec: 2,
+    color: '#FF6B35',
+    ideal: [22, 32], critLow: 15, critHigh: 35,
+    diurnal: { mean: 26, amp: 2.2, peakHour: 15 },
+  },
+];
+
+const METRIC_BY_KEY = Object.fromEntries(METRICS.map(m => [m.key, m]));
+
+let charts = {};
+let horasHistorico = 24;
+const LIVE_TICK_MS = 10_000;
+const ALERTS_WINDOW_HOURS = 72;   // painel sempre cobre 3 dias, independente do botão
+const ALERTS_MAX_ITEMS    = 50;
+// Índice do dia (UTC) em que a tarde garante pico de calor ao vivo
+const HOT_DAY_INDEX = Math.floor(new Date('2026-05-22T00:00:00Z').getTime() / 86_400_000);
+
+// ── Hash numérico ──
+function rnd(seed) {
+  const s = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// ── Leitura de telemetria por instante ──
+function simValue(ts, m) {
+  const d = new Date(ts);
+  const hour = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+
+  // Ciclo diurno (cosseno, pico em peakHour)
+  const phase = ((hour - m.diurnal.peakHour) / 24) * 2 * Math.PI;
+  let v = m.diurnal.mean + m.diurnal.amp * Math.cos(phase);
+
+  // Variação lenta entre dias (clima)
+  const dayIdx = Math.floor(ts / 86400000);
+  const keyHash = m.key.charCodeAt(0) + m.key.charCodeAt(1) * 0.3;
+  v += (rnd(dayIdx * 7.7 + keyHash) - 0.5) * m.diurnal.amp * 0.45;
+
+  // Variação de hora em hora
+  const hourSeed = Math.floor(ts / 1800000);
+  v += (rnd(hourSeed * 1.9 + keyHash * 3.1) - 0.5) * m.diurnal.amp * 0.25;
+
+  // Jitter rápido (minuto a minuto)
+  const minSeed = Math.floor(ts / 60000);
+  v += (rnd(minSeed * 11.3 + keyHash * 5.7) - 0.5) * m.diurnal.amp * 0.10;
+
+  // Queda noturna de OD/sat (consumo respiratório sem fotossíntese)
+  // Todo dia tem queda; intensidade varia → toca faixa de alerta diariamente
+  if ((m.key === 'od_concentracao' || m.key === 'od_saturacao') && hour >= 3 && hour <= 7) {
+    const dipFlag = rnd(dayIdx * 1.37 + 0.41);
+    const intensity = 0.78 + dipFlag * 0.65;
+    const shape = Math.exp(-Math.pow((hour - 5.2) / 0.9, 2));
+    v -= m.diurnal.amp * intensity * shape;
+  }
+
+  // pH cai à noite (CO₂ acumulado vira ácido carbônico) — todo dia,
+  // intensidade variável: alguns dias só dipa de leve sem entrar em alerta
+  if (m.key === 'ph' && hour >= 3 && hour <= 7) {
+    const dipFlag = rnd(dayIdx * 1.37 + 0.41);
+    const shape = Math.exp(-Math.pow((hour - 5.5) / 1.0, 2));
+    v -= (0.4 + dipFlag * 1.15) * shape;
+  }
+
+  // Aquecimento da tarde — só em dias mais quentes (~50% dos dias);
+  // dentro desses, ~metade ultrapassa 32°C
+  if (m.key === 'od_temp' && hour >= 13 && hour <= 17) {
+    let spike = 0;
+    if (dayIdx === HOT_DAY_INDEX) {
+      spike = 5.0;   // dia da feira: pico garantido (~33°C)
+    } else {
+      const heatFlag = rnd(dayIdx * 2.71 + 0.7);
+      if (heatFlag > 0.45) spike = 1.4 + heatFlag * 3.0;
+    }
+    if (spike > 0) {
+      const shape = Math.exp(-Math.pow((hour - 15) / 1.2, 2));
+      v += spike * shape;
+    }
+  }
+
+  return v;
+}
+
+// ── Geração de histórico em grade fixa ──
+// Timestamps alinhados a múltiplos do intervalo → mesmos pontos
+// reaparecem nos mesmos lugares a cada refresh (valores não "tremem").
+function intervalForPeriod(hours) {
+  if (hours <= 1)   return       60_000;   // 1 min   → 60 pts
+  if (hours <= 3)   return  2 *  60_000;   // 2 min   → 90 pts
+  if (hours <= 12)  return  5 *  60_000;   // 5 min   → 144 pts
+  if (hours <= 24)  return 10 *  60_000;   // 10 min  → 144 pts
+  if (hours <= 48)  return 20 *  60_000;   // 20 min  → 144 pts
+  if (hours <= 72)  return 30 *  60_000;   // 30 min  → 144 pts
+  return                   60 *  60_000;   // 1 h     → 168 pts
+}
+
+function generateHistory(hours) {
+  const interval = intervalForPeriod(hours);
+  // Ancorar o fim da janela no início do bucket atual → estável
+  // durante todo o bucket; só avança quando cruza o próximo múltiplo.
+  const end   = Math.floor(Date.now() / interval) * interval;
+  const span  = hours * 3600_000;
+  const n     = Math.round(span / interval);
+  const start = end - n * interval;
+  const out   = {};
+  for (const m of METRICS) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const ts = start + i * interval;
+      pts.push({ ts, value: simValue(ts, m) });
+    }
+    out[m.key] = pts;
+  }
+  return out;
+}
+
+// Valor "agora" para os cards (atualiza a cada tick, independente da grade)
+function currentValues() {
+  const now = Date.now();
+  const out = {};
+  for (const m of METRICS) out[m.key] = { ts: now, value: simValue(now, m) };
+  return out;
+}
+
+// ── Faixas (ideal / alerta / crítico) ──
+function severity(value, m) {
+  if (value < m.critLow  || value > m.critHigh) return 'critical';
+  if (value < m.ideal[0] || value > m.ideal[1]) return 'alert';
+  return 'ok';
+}
+
+const SEV_LABEL = { ok: 'Normal', alert: 'Alerta', critical: 'Crítico' };
+
+// ── Detector de transições para o painel de alertas ──
+function detectEvents(history) {
+  const events = [];
+  for (const m of METRICS) {
+    const pts = history[m.key];
+    if (!pts || pts.length === 0) continue;
+    let lastSev = severity(pts[0].value, m);
+    for (let i = 1; i < pts.length; i++) {
+      const p   = pts[i];
+      const sev = severity(p.value, m);
+      if (sev !== lastSev) {
+        events.push({
+          ts: p.ts,
+          metric: m,
+          value: p.value,
+          severity: sev,
+          prevSeverity: lastSev,
+        });
+        lastSev = sev;
+      }
+    }
+  }
+  events.sort((a, b) => b.ts - a.ts);
+  return events;
+}
+
+// ── Renderização ──
+function fmt(v, dec) {
+  return isNaN(v) ? '--' : v.toFixed(dec);
+}
+
+function fmtDateTime(ts) {
+  return new Date(ts).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function renderCards(current) {
+  for (const m of METRICS) {
+    const v = current[m.key].value;
+    document.getElementById(`val-${m.key}`).textContent = fmt(v, m.dec);
+    const sev = severity(v, m);
+    const badge = document.getElementById(`status-${m.key}`);
+    badge.className = `card-status ${sev}`;
+    badge.textContent = SEV_LABEL[sev];
+  }
+  document.getElementById('last-update').textContent =
+    new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function makeChartOptions(color) {
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: 'rgba(0,20,40,0.85)', borderColor: color,
+        borderWidth: 1, titleColor: 'rgba(255,255,255,0.8)', bodyColor: color,
+      },
+    },
+    scales: {
+      x: { ticks: { color: 'rgba(255,255,255,0.3)', maxTicksLimit: 6, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+      y: { ticks: { color: 'rgba(255,255,255,0.3)', font: { size: 10 } },                   grid: { color: 'rgba(255,255,255,0.04)' } },
+    },
+  };
+}
+
+function renderCharts(history) {
+  for (const m of METRICS) {
+    const pts = history[m.key];
+    const labels = pts.map(p => {
+      const d = new Date(p.ts);
+      return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    });
+    const data = pts.map(p => p.value.toFixed(3));
+    const cfg = {
+      labels,
+      datasets: [{
+        label: m.label, data,
+        borderColor: m.color,
+        backgroundColor: `${m.color}18`,
+        borderWidth: 2, pointRadius: 0, tension: 0.35, fill: true,
+      }],
+    };
+    if (charts[m.key]) {
+      charts[m.key].data = cfg;
+      charts[m.key].update('none');
+    } else {
+      charts[m.key] = new Chart(
+        document.getElementById(`chart-${m.key}`),
+        { type: 'line', data: cfg, options: makeChartOptions(m.color) },
+      );
+    }
+  }
+}
+
+function renderAlerts(events) {
+  const list = document.getElementById('alerts-list');
+  const count = document.getElementById('alerts-count');
+
+  const filtered = events.filter(e => e.severity !== 'ok' || e.prevSeverity !== 'ok');
+  const dias = Math.round(ALERTS_WINDOW_HOURS / 24);
+  count.textContent = `Últimos ${dias} dias · ${filtered.length} ${filtered.length === 1 ? 'evento' : 'eventos'}`;
+
+  if (filtered.length === 0) {
+    list.innerHTML = `
+      <div class="alert-empty">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <div>Todos os parâmetros dentro da faixa ideal</div>
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(e => {
+    const sev = e.severity;
+    const m = e.metric;
+    let msg;
+    if (sev === 'ok') {
+      msg = `<span class="alert-metric-name">${m.label}</span> normalizou em <span class="alert-value">${e.value.toFixed(m.dec)}${m.unit ? ' ' + m.unit : ''}</span>`;
+    } else {
+      const direction = e.value > m.ideal[1] ? 'subiu para' : 'caiu para';
+      msg = `<span class="alert-metric-name">${m.label}</span> ${direction} <span class="alert-value">${e.value.toFixed(m.dec)}${m.unit ? ' ' + m.unit : ''}</span>`;
+    }
+    return `
+      <div class="alert-item sev-${sev}">
+        <span class="alert-time">${fmtDateTime(e.ts)}</span>
+        <span class="alert-badge ${sev}">${SEV_LABEL[sev]}</span>
+        <span class="alert-msg">${msg}</span>
+      </div>`;
+  }).join('');
+}
+
+// ── Botões de período ──
+document.querySelectorAll('.time-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    horasHistorico = parseInt(btn.dataset.h, 10);
+    refresh();
+  });
+});
+
+// ── Tick principal ──
+function refresh() {
+  const history       = generateHistory(horasHistorico);
+  const alertsHistory = generateHistory(ALERTS_WINDOW_HOURS);
+  renderCards(currentValues());
+  renderCharts(history);
+  renderAlerts(detectEvents(alertsHistory).slice(0, ALERTS_MAX_ITEMS));
+}
+
+function boot() {
+  refresh();
+  document.getElementById('loading').classList.add('hidden');
+  setInterval(refresh, LIVE_TICK_MS);
+}
+
+boot();
+</script>
+
+</body>
+</html>
